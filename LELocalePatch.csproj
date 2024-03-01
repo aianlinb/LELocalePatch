@@ -13,6 +13,9 @@
 		<PackageId>$(Authors).$(AssemblyName)</PackageId>
 		<RepositoryUrl>https://github.com/aianlinb/LELocalePatch</RepositoryUrl>
 		<PackageProjectUrl>$(RepositoryUrl)</PackageProjectUrl>
+
+		<IlcTrimMetadata>true</IlcTrimMetadata>
+		<DebuggerSupport>false</DebuggerSupport>
 	</PropertyGroup>
 
 	<ItemGroup>

@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+#if DEBUG
 using System.Runtime.ExceptionServices;
+#endif
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -13,7 +15,7 @@ namespace LELocalePatch {
 		/// <summary>
 		/// Entry point of the program.
 		/// Parses the command line <paramref name="args"/> and calls <see cref="Run"/>.
-		/// Then outputs the success message or exception to the console and pauses using <see cref="Console.ReadLine"/>.
+		/// Then outputs the success message or exception to the console.
 		/// </summary>
 		/// <param name="args">
 		/// <list type="number">
@@ -43,11 +45,18 @@ namespace LELocalePatch {
 		///		</item>
 		/// </list>
 		/// </param>
+		/// <remarks>
+		/// Show the Usage message and pause if <paramref name="args"/> is empty.
+		/// </remarks>
 		/// <exception cref="IOException"/>
 		public static void Main(string[] args) {
 			if (args.Length != 3) {
 				Console.WriteLine("Usage: LELocalePatch <bundlePath> {dump|patch|patchFull} <folderPath>");
-				goto end;
+				if (args.Length == 0) {
+					Console.WriteLine();
+					Console.Write("Enter to exit . . .");
+					Console.ReadLine();
+				}
 			}
 
 			bool dump, @throw = false;
@@ -62,7 +71,7 @@ namespace LELocalePatch {
 					break;
 				default:
 					Console.WriteLine("Invalid action: " + args[1]);
-					goto end;
+					return;
 			}
 
 			try {
@@ -77,10 +86,6 @@ namespace LELocalePatch {
 				ExceptionDispatchInfo.Capture(ex).Throw();
 #endif
 			}
-		end:
-			Console.WriteLine();
-			Console.Write("Enter to exit . . .");
-			Console.ReadLine();
 		}
 
 		/// <param name="bundlePath">
@@ -112,7 +117,8 @@ namespace LELocalePatch {
 			var manager = new AssetsManager();
 			try {
 				var bundle = manager.LoadBundleFile(new MemoryStream(File.ReadAllBytes(bundlePath)), bundlePath);
-				var assets = manager.LoadAssetsFileFromBundle(bundle, 0);
+				const int ASSETS_INDEX_IN_BUNDLE = 0;
+				var assets = manager.LoadAssetsFileFromBundle(bundle, ASSETS_INDEX_IN_BUNDLE);
 
 				var modified = false;
 				foreach (var info in assets.file.AssetInfos) {
@@ -123,6 +129,7 @@ namespace LELocalePatch {
 					var name = stringTable["m_Name"].AsString;
 
 					var path = $"{folderPath}{Path.DirectorySeparatorChar}{name}.json";
+					Console.WriteLine(path);
 					if (dump) {
 						using var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read);
 						Dump(tableEnties.Children, fs);
@@ -139,7 +146,11 @@ namespace LELocalePatch {
 				}
 
 				if (!dump && modified) {
-					bundle.file.BlockAndDirInfo.DirectoryInfos[0].SetNewData(assets.file);
+					bundle.file.BlockAndDirInfo.DirectoryInfos[ASSETS_INDEX_IN_BUNDLE].SetNewData(assets.file);
+					var uncompressed = new MemoryStream();
+					bundle.file.Write(new(uncompressed)); // The `Pack` method doesn't consider the replacer (The modified data), so write and read again here.
+					bundle.file.Close();
+					bundle.file.Read(new(uncompressed));
 					using var writer = new AssetsFileWriter(bundlePath);
 					bundle.file.Pack(writer, AssetBundleCompressionType.LZMA);
 				}

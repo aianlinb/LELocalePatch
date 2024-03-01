@@ -9,7 +9,8 @@ The bundles of this game are protected by the CRC check, so you have to disable 
 ```cmd
 Example.exe patchcrc "Last Epoch_Data\StreamingAssets\aa\catalog.json"
 ```
-This may need to be done every time the game is updated. (If it updates the catalog.json)
+And it will write to the `catalog.json.patched` near the original file. You should replace the `catalog.json` with it.
+> This may need to be done every time the game is updated. (If it updates the catalog.json)
 
 ## Usage
 
