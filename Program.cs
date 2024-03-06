@@ -13,42 +13,12 @@ using AssetsTools.NET.Extra;
 namespace LELocalePatch {
 	public static class Program {
 		/// <summary>
-		/// Entry point of the program.
-		/// Parses the command line <paramref name="args"/> and calls <see cref="Run"/>.
-		/// Then outputs the success message or exception to the console.
+		/// Entry point of the program.=
 		/// </summary>
-		/// <param name="args">
-		/// <list type="number">
-		///		<listheader>
-		///		The path of the bundle file.
-		///		(e.g. @"Last Epoch_Data\StreamingAssets\aa\StandaloneWindows64\localization-string-tables-chinese(simplified)(zh)_assets_all.bundle")
-		///		</listheader>
-		///		<item>
-		///		The action to perform:
-		///		<list type="table">
-		///			<item>
-		///			<term>dump</term>
-		///			<description>Dump the localization in bundle to json files</description>
-		///			</item>
-		///			<item>
-		///			<term>patch</term>
-		///			<description>Patch the localization from json files</description>
-		///			</item>
-		///			<item>
-		///			<term>patchFull</term>
-		///			<description>Same as patch but throw an exception when any entry in bundle is not found in the json file</description>
-		///			</item>
-		///		</list>
-		///		</item>
-		///		<item>
-		///		The folder path to dump or apply the json files.
-		///		</item>
-		/// </list>
-		/// </param>
 		/// <remarks>
-		/// Show the Usage message and pause if <paramref name="args"/> is empty.
+		/// Parses the command line <paramref name="args"/> and calls <see cref="Run"/>.
+		/// Then outputs the success message or exception to the <see cref="Console"/>.
 		/// </remarks>
-		/// <exception cref="IOException"/>
 		public static void Main(string[] args) {
 			if (args.Length != 3) {
 				Console.WriteLine("Usage: LELocalePatch <bundlePath> {dump|patch|patchFull} <folderPath>");
@@ -60,11 +30,11 @@ namespace LELocalePatch {
 			}
 
 			bool dump, @throw = false;
-			switch (args[1]) {
+			switch (args[1].ToLowerInvariant()) {
 				case "dump":
 					dump = true;
 					break;
-				case "patchFull":
+				case "patchfull":
 					@throw = true; goto case "patch";
 				case "patch":
 					dump = false;
@@ -93,13 +63,14 @@ namespace LELocalePatch {
 		/// (e.g. @"Last Epoch_Data\StreamingAssets\aa\StandaloneWindows64\localization-string-tables-chinese(simplified)(zh)_assets_all.bundle")
 		/// </param>
 		/// <param name="folderPath">
-		/// The folder path to dump or apply the json files.
+		/// The folder path to dump or apply the json files (in UTF-8).
 		/// </param>
 		/// <param name="dump">
 		/// <see langword="true"/> to dump the localization to json files; <see langword="false"/> to apply them back.
 		/// </param>
 		/// <param name="throwNotMatch">
-		/// <see langword="true"/> to throw an exception when any entry in bundle is not found in the json file.<br />
+		/// <see langword="true"/> to throw an exception when any entry in bundle is not found in the json file,
+		/// or the json file doesn't exist.<br />
 		/// Ignored when <paramref name="dump"/> is <see langword="true"/>.
 		/// </param>
 		/// <exception cref="FileNotFoundException"/>
@@ -141,7 +112,7 @@ namespace LELocalePatch {
 								modified = true;
 							}
 						} else if (throwNotMatch)
-							ThrowFileNotFound(path);
+							ThrowJsonFileNotFound(path);
 					}
 				}
 
@@ -190,7 +161,7 @@ namespace LELocalePatch {
 		/// <code>UnityEngine.Localization.Tables.StringTable.m_TableData</code>
 		/// Get by <c>BaseField["m_TableData"]["Array"].Children</c> of an asset in bundle
 		/// </param>
-		/// <param name="jsonData">Json file to read the content to patch</param>
+		/// <param name="utf8JsonData">Json file to read the content to patch</param>
 		/// <param name="throwNotMatch">
 		/// <see langword="true"/> to throw an exception when any entry in bundle is not found in the json file.<br />
 		/// Ignored when <paramref name="dump"/> is <see langword="true"/>.
@@ -199,10 +170,12 @@ namespace LELocalePatch {
 		/// <exception cref="JsonException"/>
 		/// <exception cref="DummyFieldAccessException"/>
 		/// <exception cref="KeyNotFoundException"/>
-		public static bool Patch(IReadOnlyList<AssetTypeValueField> tableEnties, ReadOnlySpan<byte> jsonData, bool throwNotMatch = false) {
+		public static bool Patch(IReadOnlyList<AssetTypeValueField> tableEnties, ReadOnlySpan<byte> utf8JsonData, bool throwNotMatch = false) {
 			if (tableEnties.Count == 0)
 				return false;
-			var reader = new Utf8JsonReader(jsonData, new() { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip });
+			if (utf8JsonData.StartsWith<byte>([0xEF, 0xBB, 0xBF])) // UTF-8 BOM
+				utf8JsonData = utf8JsonData[3..];
+			var reader = new Utf8JsonReader(utf8JsonData, new() { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip });
 			var node = JsonNode.Parse(ref reader)!.AsObject();
 			if (node.Count == 0)
 				return false;
@@ -215,7 +188,6 @@ namespace LELocalePatch {
 				} else if (throwNotMatch)
 					ThrowKeyNotFound(tableEnties[i]["m_Id"].Value.ToString());
 			}
-
 			return modified;
 		}
 
@@ -226,7 +198,7 @@ namespace LELocalePatch {
 
 		/// <exception cref="FileNotFoundException"/>
 		[DoesNotReturn, DebuggerNonUserCode]
-		private static void ThrowFileNotFound(string jsonPath)
+		private static void ThrowJsonFileNotFound(string jsonPath)
 			=> throw new FileNotFoundException("The json file does not exist: " + jsonPath);
 
 		/// <exception cref="DirectoryNotFoundException"/>
