@@ -52,6 +52,9 @@ namespace LELocalePatch {
 				Console.ForegroundColor = ConsoleColor.Red;
 				Console.Error.WriteLine(ex);
 				Console.ForegroundColor = tmp;
+				Console.WriteLine();
+				Console.Write("Enter to exit . . .");
+				Console.ReadLine();
 #if DEBUG
 				ExceptionDispatchInfo.Capture(ex).Throw();
 #endif
