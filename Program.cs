@@ -1,8 +1,11 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.IO.Compression;
+using System.Runtime.CompilerServices;
 #if DEBUG
 using System.Runtime.ExceptionServices;
 #endif
+using System.Runtime.InteropServices;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -21,7 +24,7 @@ namespace LELocalePatch {
 		/// </remarks>
 		public static void Main(string[] args) {
 			if (args.Length != 3) {
-				Console.WriteLine("Usage: LELocalePatch <bundlePath> {dump|patch|patchFull} <folderPath>");
+				Console.WriteLine("Usage: LELocalePatch <bundlePath> {dump|patch|patchFull} <folderPath|zipPath>");
 				if (args.Length == 0) {
 					Console.WriteLine();
 					Console.Write("Enter to exit . . .");
@@ -56,7 +59,7 @@ namespace LELocalePatch {
 				Console.Write("Enter to exit . . .");
 				Console.ReadLine();
 #if DEBUG
-				ExceptionDispatchInfo.Capture(ex).Throw();
+				ExceptionDispatchInfo.Capture(ex).Throw(); // Throw to the debugger
 #endif
 			}
 		}
@@ -65,8 +68,8 @@ namespace LELocalePatch {
 		/// The path of the bundle file.
 		/// (e.g. @"Last Epoch_Data\StreamingAssets\aa\StandaloneWindows64\localization-string-tables-chinese(simplified)(zh)_assets_all.bundle")
 		/// </param>
-		/// <param name="folderPath">
-		/// The folder path to dump or apply the json files (in UTF-8).
+		/// <param name="folderOrZipPath">
+		/// Path of the folder/zip-file to dump or apply the json files (in UTF-8).
 		/// </param>
 		/// <param name="dump">
 		/// <see langword="true"/> to dump the localization to json files; <see langword="false"/> to apply them back.
@@ -81,15 +84,29 @@ namespace LELocalePatch {
 		/// <exception cref="DummyFieldAccessException"/>
 		/// <exception cref="JsonException"/>
 		/// <exception cref="KeyNotFoundException"/>
-		public static void Run(string bundlePath, string folderPath, bool dump, bool throwNotMatch = false) {
-			if (dump)
-				folderPath = Directory.CreateDirectory(folderPath).FullName;
-			else if (!Directory.Exists(folderPath)) // patch
-				ThrowDirectoryNotFound(folderPath);
-			bundlePath = Path.GetFullPath(bundlePath);
-
+		public static void Run(string bundlePath, string folderOrZipPath, bool dump, bool throwNotMatch = false) {
 			var manager = new AssetsManager();
+			ZipArchive? zip = null;
 			try {
+				if (dump) {
+					if (folderOrZipPath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+						zip = ZipFile.Open(folderOrZipPath, ZipArchiveMode.Create);
+					else
+						folderOrZipPath = Directory.CreateDirectory(folderOrZipPath).FullName;
+				} else { // patch
+					if (!Directory.Exists(folderOrZipPath)) {
+						if (File.Exists(folderOrZipPath))
+							zip = ZipFile.OpenRead(folderOrZipPath);
+						else
+							ThrowDirectoryNotFound(folderOrZipPath);
+					}
+					var catPath = Path.GetDirectoryName(Path.GetDirectoryName(bundlePath)) + "/catalog.json";
+					if (!File.Exists(catPath))
+						ThrowCatalogNotFound(catPath);
+					RemoveCRC(catPath);
+				}
+				bundlePath = Path.GetFullPath(bundlePath);
+
 				var bundle = manager.LoadBundleFile(new MemoryStream(File.ReadAllBytes(bundlePath)), bundlePath);
 				const int ASSETS_INDEX_IN_BUNDLE = 0;
 				var assets = manager.LoadAssetsFileFromBundle(bundle, ASSETS_INDEX_IN_BUNDLE);
@@ -100,22 +117,28 @@ namespace LELocalePatch {
 						continue; // MonoScript or AssetBundle
 					var stringTable = manager.GetBaseField(assets, info);
 					var tableEnties = stringTable["m_TableData"]["Array"];
-					var name = stringTable["m_Name"].AsString;
+					var filename = stringTable["m_Name"].AsString + ".json";
 
-					var path = $"{folderPath}{Path.DirectorySeparatorChar}{name}.json";
-					Console.WriteLine(path);
+					Console.WriteLine(filename);
 					if (dump) {
-						using var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read);
-						Dump(tableEnties.Children, fs);
+						using Stream stream = zip is null
+							? new FileStream($"{folderOrZipPath}/{filename}", FileMode.Create, FileAccess.Write, FileShare.Read)
+							: zip.CreateEntry(filename, CompressionLevel.Optimal).Open();
+						Dump(tableEnties.Children, stream);
 					} else { // patch
-						if (File.Exists(path)) {
-							if (Patch(tableEnties.Children, File.ReadAllBytes(path), throwNotMatch)) {
-								//tableEnties.AsArray = new(tableEnties.Children.Count); // Uncomment this if someday the Patch method will add/remove entries
-								info.SetNewData(stringTable);
-								modified = true;
-							}
-						} else if (throwNotMatch)
-							ThrowJsonFileNotFound(path);
+						using Stream? stream = zip is null
+							? File.Exists(filename = Path.GetFullPath($"{folderOrZipPath}/{filename}")) ? File.OpenRead(filename) : null
+							: zip.Entries.FirstOrDefault(e => e.FullName == filename) is ZipArchiveEntry e ? e.Open() : null;
+						if (stream is null) {
+							if (throwNotMatch)
+								ThrowJsonFileNotFound(filename);
+							continue;
+						}
+						if (Patch(tableEnties.Children, stream, throwNotMatch)) {
+							//tableEnties.AsArray = new(tableEnties.Children.Count); // Uncomment this if someday the Patch method will add/remove entries
+							info.SetNewData(stringTable);
+							modified = true;
+						}
 					}
 				}
 
@@ -129,6 +152,7 @@ namespace LELocalePatch {
 					bundle.file.Pack(writer, AssetBundleCompressionType.LZMA);
 				}
 			} finally {
+				zip?.Dispose();
 				manager.UnloadAll(true);
 			}
 		}
@@ -164,7 +188,7 @@ namespace LELocalePatch {
 		/// <code>UnityEngine.Localization.Tables.StringTable.m_TableData</code>
 		/// Get by <c>BaseField["m_TableData"]["Array"].Children</c> of an asset in bundle
 		/// </param>
-		/// <param name="utf8JsonData">Json file to read the content to patch</param>
+		/// <param name="utf8JsonFile">Json file to read the content to patch</param>
 		/// <param name="throwNotMatch">
 		/// <see langword="true"/> to throw an exception when any entry in bundle is not found in the json file.<br />
 		/// Ignored when <paramref name="dump"/> is <see langword="true"/>.
@@ -173,13 +197,10 @@ namespace LELocalePatch {
 		/// <exception cref="JsonException"/>
 		/// <exception cref="DummyFieldAccessException"/>
 		/// <exception cref="KeyNotFoundException"/>
-		public static bool Patch(IReadOnlyList<AssetTypeValueField> tableEnties, ReadOnlySpan<byte> utf8JsonData, bool throwNotMatch = false) {
+		public static bool Patch(IReadOnlyList<AssetTypeValueField> tableEnties, Stream utf8JsonFile, bool throwNotMatch = false) {
 			if (tableEnties.Count == 0)
 				return false;
-			if (utf8JsonData.StartsWith<byte>([0xEF, 0xBB, 0xBF])) // UTF-8 BOM
-				utf8JsonData = utf8JsonData[3..];
-			var reader = new Utf8JsonReader(utf8JsonData, new() { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip });
-			var node = JsonNode.Parse(ref reader)!.AsObject();
+			var node = JsonNode.Parse(utf8JsonFile, null, new() { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip })!.AsObject();
 			if (node.Count == 0)
 				return false;
 
@@ -194,15 +215,78 @@ namespace LELocalePatch {
 			return modified;
 		}
 
+		public static void RemoveCRC(string catalogJsonPath) {
+			var utf8 = new Utf8JsonReader(File.ReadAllBytes(catalogJsonPath));
+			var json = JsonNode.Parse(ref utf8);
+			var providerIndex = 0;
+			foreach (var v in json!["m_ProviderIds"]!.AsArray()) {
+				if ((string?)v == "UnityEngine.ResourceManagement.ResourceProviders.AssetBundleProvider")
+					break;
+				++providerIndex;
+			}
+			var entryData = Convert.FromBase64String((string)json["m_EntryDataString"]!);
+			var extraData = Convert.FromBase64String((string)json["m_ExtraDataString"]!);
+			var entryCount = MemoryMarshal.Read<int>(entryData);
+			var entryDatas = MemoryMarshal.CreateReadOnlySpan(ref Unsafe.As<byte, EntryData>(ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(entryData), sizeof(int))), entryCount);
+
+			var modified = false;
+			for (var i = 0; i < entryCount; ++i) {
+				if (entryDatas[i].ProviderIndex != providerIndex)
+					continue;
+				var offset = entryDatas[i].DataIndex;
+				if (extraData[offset] == 7) { // JsonObject
+					++offset;
+					offset += extraData[offset]; // ascii string length
+					++offset;
+					offset += extraData[offset]; // ascii string length
+					var len = MemoryMarshal.Read<int>(new(extraData, ++offset, sizeof(int)));
+					if (JsonNode.Parse(MemoryMarshal.Cast<byte, char>(new ReadOnlySpan<byte>(extraData, offset + sizeof(int), len)).ToString()) is JsonObject jsonObj) {
+						if (!jsonObj.ContainsKey("m_Crc"))
+							continue;
+						jsonObj["m_Crc"] = 0;
+						var result = jsonObj.ToJsonString();
+						Debug.Assert(result.Length * 2 <= len);
+						MemoryMarshal.Write(extraData.AsSpan(offset, sizeof(int)), result.Length * 2);
+						MemoryMarshal.AsBytes(result.AsSpan()).CopyTo(extraData.AsSpan(offset + sizeof(int)));
+						modified = true;
+					} else
+						Debug.Assert(false);
+				}
+			}
+			if (modified) {
+				json["m_ExtraDataString"] = Convert.ToBase64String(extraData);
+				using var fs = new FileStream(catalogJsonPath, FileMode.Create, FileAccess.Write, FileShare.None);
+				using var writer = new Utf8JsonWriter(fs, new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+				json.WriteTo(writer, new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+			}
+		}
+
+		private readonly struct EntryData {
+#pragma warning disable CS0649
+			public readonly int InternalIdIndex;
+			public readonly int ProviderIndex;
+			public readonly int DependencyKey;
+			public readonly int DepHash;
+			public readonly int DataIndex;
+			public readonly int PrimaryKeyInde;
+			public readonly int ResourceTypeIndex;
+#pragma warning restore CS0649
+		}
+
 		/// <exception cref="DirectoryNotFoundException"/>
 		[DoesNotReturn, DebuggerNonUserCode]
 		private static void ThrowDirectoryNotFound(string folderPath)
-			=> throw new DirectoryNotFoundException("The input folder does not exist: " + folderPath);
+			=> throw new DirectoryNotFoundException("The input folder does not exist: " + Path.GetFullPath(folderPath));
 
 		/// <exception cref="FileNotFoundException"/>
 		[DoesNotReturn, DebuggerNonUserCode]
-		private static void ThrowJsonFileNotFound(string jsonPath)
-			=> throw new FileNotFoundException("The json file does not exist: " + jsonPath);
+		private static void ThrowCatalogNotFound(string catalogJsonPath)
+			=> throw new FileNotFoundException("The catalog.json file does not exist: " + Path.GetFullPath(catalogJsonPath));
+
+		/// <exception cref="FileNotFoundException"/>
+		[DoesNotReturn, DebuggerNonUserCode]
+		private static void ThrowJsonFileNotFound(string jsonFileName)
+			=> throw new FileNotFoundException("The json file does not exist: " + jsonFileName);
 
 		/// <exception cref="DirectoryNotFoundException"/>
 		[DoesNotReturn, DebuggerNonUserCode]

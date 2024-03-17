@@ -5,17 +5,14 @@ A simple command line program to dump/patch the localizations of game [Last Epoc
 
 ## Note
 
-The bundles of this game are protected by the CRC check, so you have to disable it by [AddressablesTools](https://github.com/nesrak1/AddressablesTools/releases) with the following command in your game installation folder to make any changes work.
-```cmd
-Example.exe patchcrc "Last Epoch_Data\StreamingAssets\aa\catalog.json"
-```
-And it will write to the `catalog.json.patched` near the original file. You should replace the `catalog.json` with it.
-> This may need to be done every time the game is updated. (If it updates the catalog.json)
+For disabling the CRC check, the program will patch the `"Last Epoch_Data\StreamingAssets\aa\catalog.json"` file.
+And we will find it by `"../catalog.json"` relative to the bundle path.
+So if your bundle file is not in the game folder, you need to copy the `catalog.json` to the relative path too.
 
 ## Usage
 
 ```sh
-LELocalePatch <bundlePath> {dump|patch|patchFull} <folderPath>
+LELocalePatch <bundlePath> {dump|patch|patchFull} <folderPath|zipPath>
 ```
 
 - `bundlePath`: The path of the bundle file.
@@ -24,14 +21,14 @@ LELocalePatch <bundlePath> {dump|patch|patchFull} <folderPath>
 - `actions`:
 	- `dump`: Dump the localization in bundle to json files and save them to `folderPath`.
 	- `patch`: Patch the localization from json files in `folderPath` to the bundle.
-	- `patchFull`: Same as `patch` but throw an exception when any entry in bundle is not found in the json file.
+	- `patchFull`: Same as `patch` but throw an exception when any entry in bundle is not found in the json file (whenever exists or not).
 
-- `folderPath`: The folder path to dump or apply the json files. Missing files are ignored in `patch` mode.
+- `folderPath`: Path of the folder/zipFile to dump or apply the json files. Missing files are ignored in `patch` mode (but not `pathFull`).
 
 ## Platforms
 
 Tested on Windows.
-For other platforms, you may need to build the `AddressablesTools` yourself.
+Not tested on other platforms, but should work fine.
 
 ## Libraries
 
