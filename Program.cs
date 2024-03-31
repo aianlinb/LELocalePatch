@@ -25,11 +25,9 @@ namespace LELocalePatch {
 		public static void Main(string[] args) {
 			if (args.Length != 3) {
 				Console.WriteLine("Usage: LELocalePatch <bundlePath> {dump|patch|patchFull} <folderPath|zipPath>");
-				if (args.Length == 0) {
-					Console.WriteLine();
-					Console.Write("Enter to exit . . .");
-					Console.ReadLine();
-				}
+				if (args.Length == 0)
+					goto pause;
+				return;
 			}
 
 			bool dump, @throw = false;
@@ -49,19 +47,21 @@ namespace LELocalePatch {
 
 			try {
 				Run(args[0], args[2], dump, @throw);
-				Console.WriteLine("Done!");
+				return; // Do not pause if success
 			} catch (Exception ex) {
 				var tmp = Console.ForegroundColor;
 				Console.ForegroundColor = ConsoleColor.Red;
+				Console.WriteLine("Error");
 				Console.Error.WriteLine(ex);
 				Console.ForegroundColor = tmp;
-				Console.WriteLine();
-				Console.Write("Enter to exit . . .");
-				Console.ReadLine();
 #if DEBUG
 				ExceptionDispatchInfo.Capture(ex).Throw(); // Throw to the debugger
 #endif
 			}
+		pause:
+			Console.WriteLine();
+			Console.Write("Enter to exit . . .");
+			Console.ReadLine();
 		}
 
 		/// <param name="bundlePath">
@@ -151,6 +151,7 @@ namespace LELocalePatch {
 					using var writer = new AssetsFileWriter(bundlePath);
 					bundle.file.Pack(writer, AssetBundleCompressionType.LZMA);
 				}
+				Console.WriteLine("Done!");
 			} finally {
 				zip?.Dispose();
 				manager.UnloadAll(true);

@@ -1,7 +1,6 @@
 # LastEpoch Localization Patcher
 
 A simple command line program to dump/patch the localizations of game [Last Epoch](https://store.steampowered.com/app/899770).
-> [繁體中文翻譯請點這](https://forum.gamer.com.tw/Co.php?bsn=35693&sn=2598)
 
 ## Note
 
@@ -29,6 +28,9 @@ LELocalePatch <bundlePath> {dump|patch|patchFull} <folderPath|zipPath>
 
 Tested on Windows.
 Not tested on other platforms, but should work fine.
+
+## Example
+[Traditional Chinese](https://github.com/aianlinb/LETraditionalChinese/tree/main/zh-Hant)
 
 ## Libraries
 

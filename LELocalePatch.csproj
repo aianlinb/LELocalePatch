@@ -6,16 +6,19 @@
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 		<PublishAot>true</PublishAot>
+		<InvariantGlobalization>true</InvariantGlobalization>
+		
+		<IlcFoldIdenticalMethodBodies>true</IlcFoldIdenticalMethodBodies>
+		<DebuggerSupport>false</DebuggerSupport>
+		<EventSourceSupport>false</EventSourceSupport>
+		<RollForward>LatestMajor</RollForward>
 		
 		<Version>1.1.0</Version>
 		<Authors>aianlinb</Authors>
 		<Copyright>Copyright © 2024 aianlinb</Copyright>
-		<PackageId>$(Authors).$(AssemblyName)</PackageId>
+		<PackageId>LastEpoch.Localization</PackageId>
 		<RepositoryUrl>https://github.com/aianlinb/LELocalePatch</RepositoryUrl>
 		<PackageProjectUrl>$(RepositoryUrl)</PackageProjectUrl>
-
-		<IlcTrimMetadata>true</IlcTrimMetadata>
-		<DebuggerSupport>false</DebuggerSupport>
 	</PropertyGroup>
 
 	<ItemGroup>
