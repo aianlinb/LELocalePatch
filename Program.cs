@@ -9,44 +9,42 @@ using System.Runtime.InteropServices;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-
 using AssetsTools.NET;
 using AssetsTools.NET.Extra;
 
 namespace LELocalePatch {
 	public static class Program {
 		/// <summary>
-		/// Entry point of the program.=
+		/// Entry point of the program.
 		/// </summary>
 		/// <remarks>
 		/// Parses the command line <paramref name="args"/> and calls <see cref="Run"/>.
 		/// Then outputs the success message or exception to the <see cref="Console"/>.
 		/// </remarks>
 		public static void Main(string[] args) {
+			static void PrintUsage() {
+				Console.WriteLine("Usage: LELocalePatch <bundlePath> {export|import} <folderPath|zipPath>");
+				Console.WriteLine("   or: LELocalePatch <bundlePath> translate <dictionaryFilePath>");
+			}
+
 			if (args.Length != 3) {
-				Console.WriteLine("Usage: LELocalePatch <bundlePath> {dump|patch|patchFull} <folderPath|zipPath>");
+				PrintUsage();
 				if (args.Length == 0)
 					goto pause;
 				return;
 			}
 
-			bool dump, @throw = false;
-			switch (args[1].ToLowerInvariant()) {
-				case "dump":
-					dump = true;
-					break;
-				case "patchfull":
-					@throw = true; goto case "patch";
-				case "patch":
-					dump = false;
-					break;
-				default:
-					Console.WriteLine("Invalid action: " + args[1]);
-					return;
-			}
-
 			try {
-				Run(args[0], args[2], dump, @throw);
+				var mode = args[1].ToLowerInvariant() switch {
+					"export" => Mode.Export,
+					"import" => Mode.Import,
+					"translate" => Mode.Translate,
+					_ => Mode.None
+				};
+				if (mode == Mode.None)
+					PrintUsage();
+				else
+					Run(args[0], args[2], mode);
 				return; // Do not pause if success
 			} catch (Exception ex) {
 				var tmp = Console.ForegroundColor;
@@ -68,42 +66,66 @@ namespace LELocalePatch {
 		/// The path of the bundle file.
 		/// (e.g. @"Last Epoch_Data\StreamingAssets\aa\StandaloneWindows64\localization-string-tables-chinese(simplified)(zh)_assets_all.bundle")
 		/// </param>
-		/// <param name="folderOrZipPath">
-		/// Path of the folder/zip-file to dump or apply the json files (in UTF-8).
-		/// </param>
-		/// <param name="dump">
-		/// <see langword="true"/> to dump the localization to json files; <see langword="false"/> to apply them back.
-		/// </param>
-		/// <param name="throwNotMatch">
-		/// <see langword="true"/> to throw an exception when any entry in bundle is not found in the json file,
-		/// or the json file doesn't exist.<br />
-		/// Ignored when <paramref name="dump"/> is <see langword="true"/>.
+		/// <param name="targetPath">
+		/// Path of the folder/zip-file to ex(im)port the json files (in UTF-8), or the dictionary json file for translation.
 		/// </param>
 		/// <exception cref="FileNotFoundException"/>
 		/// <exception cref="DirectoryNotFoundException"/>
 		/// <exception cref="DummyFieldAccessException"/>
 		/// <exception cref="JsonException"/>
 		/// <exception cref="KeyNotFoundException"/>
-		public static void Run(string bundlePath, string folderOrZipPath, bool dump, bool throwNotMatch = false) {
+		public static void Run(string bundlePath, string targetPath, Mode mode) {
+			if (mode is < Mode.Export or > Mode.Translate)
+				ThrowModeNotExist(mode);
+
+			if (mode != Mode.Export) {
+				var catPath = Path.GetFullPath(Path.GetDirectoryName(Path.GetDirectoryName(bundlePath)) + "/catalog.json");
+				if (!File.Exists(catPath))
+					ThrowFileNotFound(catPath);
+				RemoveCRC(catPath);
+			}
+
+			targetPath = Path.GetFullPath(targetPath);
 			var manager = new AssetsManager();
 			ZipArchive? zip = null;
+			IDictionary<string, JsonNode?>? contents = null;
 			try {
-				if (dump) {
-					if (folderOrZipPath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-						zip = ZipFile.Open(folderOrZipPath, ZipArchiveMode.Create);
-					else
-						folderOrZipPath = Directory.CreateDirectory(folderOrZipPath).FullName;
-				} else { // patch
-					if (!Directory.Exists(folderOrZipPath)) {
-						if (File.Exists(folderOrZipPath))
-							zip = ZipFile.OpenRead(folderOrZipPath);
+				switch (mode) {
+					case Mode.Export:
+						if (targetPath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+							zip = ZipFile.Open(targetPath, ZipArchiveMode.Create);
 						else
-							ThrowDirectoryNotFound(folderOrZipPath);
-					}
-					var catPath = Path.GetDirectoryName(Path.GetDirectoryName(bundlePath)) + "/catalog.json";
-					if (!File.Exists(catPath))
-						ThrowCatalogNotFound(catPath);
-					RemoveCRC(catPath);
+							Directory.CreateDirectory(targetPath);
+						break;
+					case Mode.Import:
+						if (!Directory.Exists(targetPath)) {
+							if (File.Exists(targetPath))
+								zip = ZipFile.OpenRead(targetPath);
+							else
+								ThrowDirectoryNotFound(targetPath);
+						}
+						break;
+					case Mode.Translate:
+						if (!File.Exists(targetPath))
+							ThrowFileNotFound(targetPath);
+						Stream stream;
+						if (targetPath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) {
+							zip = ZipFile.Open(targetPath, ZipArchiveMode.Read);
+							stream = zip.Entries.First(e => e.FullName.Equals("dictionary.json", StringComparison.OrdinalIgnoreCase)).Open();
+						} else {
+							stream = File.OpenRead(targetPath);
+						}
+						using (stream) {
+							contents = JsonNode.Parse(stream, null, new() { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip })!.AsObject();
+							if (zip is not null) {
+								zip.Dispose();
+								zip = null;
+							}
+						}
+						break;
+					default:
+						ThrowModeNotExist(mode);
+						return;
 				}
 				bundlePath = Path.GetFullPath(bundlePath);
 
@@ -119,35 +141,48 @@ namespace LELocalePatch {
 					var tableEnties = stringTable["m_TableData"]["Array"];
 					var filename = stringTable["m_Name"].AsString + ".json";
 
-					Console.WriteLine(filename);
-					if (dump) {
-						using Stream stream = zip is null
-							? new FileStream($"{folderOrZipPath}/{filename}", FileMode.Create, FileAccess.Write, FileShare.Read)
-							: zip.CreateEntry(filename, CompressionLevel.Optimal).Open();
-						Dump(tableEnties.Children, stream);
-					} else { // patch
-						using Stream? stream = zip is null
-							? File.Exists(filename = Path.GetFullPath($"{folderOrZipPath}/{filename}")) ? File.OpenRead(filename) : null
-							: zip.Entries.FirstOrDefault(e => e.FullName == filename) is ZipArchiveEntry e ? e.Open() : null;
-						if (stream is null) {
-							if (throwNotMatch)
-								ThrowJsonFileNotFound(filename);
-							continue;
-						}
-						if (Patch(tableEnties.Children, stream, throwNotMatch)) {
-							//tableEnties.AsArray = new(tableEnties.Children.Count); // Uncomment this if someday the Patch method will add/remove entries
-							info.SetNewData(stringTable);
-							modified = true;
-						}
+					Console.Write(filename + " ... "); 
+					switch (mode) {
+						case Mode.Export:
+							using(Stream stream = zip is null
+								? new FileStream($"{targetPath}/{filename}", FileMode.Create, FileAccess.Write, FileShare.Read)
+								: zip.CreateEntry(filename, CompressionLevel.SmallestSize).Open())
+								Export(tableEnties.Children, stream);
+							break;
+						case Mode.Import:
+							using (Stream? stream = zip is null
+								? File.Exists(filename = Path.GetFullPath($"{targetPath}/{filename}")) ? File.OpenRead(filename) : null
+								: zip.Entries.FirstOrDefault(e => e.FullName == filename) is ZipArchiveEntry e ? e.Open() : null) {
+								if (stream is null) {
+									Console.WriteLine("Not found");
+									continue;
+								}
+								contents = JsonNode.Parse(stream, null, new() { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip })!.AsObject();
+							}
+							goto case Mode.Translate;
+						case Mode.Translate:
+							if (Import(tableEnties.Children, contents!, mode is Mode.Translate)) {
+								//tableEnties.AsArray = new(tableEnties.Children.Count); // Uncomment this if someday the Import method will add/remove entries
+								info.SetNewData(stringTable);
+								modified = true;
+							}
+							break;
+						default:
+							ThrowModeNotExist(mode);
+							return;
 					}
+					Console.WriteLine("Done");
 				}
 
-				if (!dump && modified) {
+				if (modified) {
 					bundle.file.BlockAndDirInfo.DirectoryInfos[ASSETS_INDEX_IN_BUNDLE].SetNewData(assets.file);
+
+					// The `Pack` method doesn't consider the replacer (The modified data), so write and read again here.
 					var uncompressed = new MemoryStream();
-					bundle.file.Write(new(uncompressed)); // The `Pack` method doesn't consider the replacer (The modified data), so write and read again here.
+					bundle.file.Write(new(uncompressed)); 
 					bundle.file.Close();
 					bundle.file.Read(new(uncompressed));
+
 					using var writer = new AssetsFileWriter(bundlePath);
 					bundle.file.Pack(writer, AssetBundleCompressionType.LZMA);
 				}
@@ -156,6 +191,18 @@ namespace LELocalePatch {
 				zip?.Dispose();
 				manager.UnloadAll(true);
 			}
+
+			[DoesNotReturn, DebuggerNonUserCode]
+			static void ThrowModeNotExist(Mode mode)
+				=> throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unknown mode");
+
+			[DoesNotReturn, DebuggerNonUserCode]
+			static void ThrowDirectoryNotFound(string folderPath)
+				=> throw new DirectoryNotFoundException("The input folder does not exist: " + Path.GetFullPath(folderPath));
+
+			[DoesNotReturn, DebuggerNonUserCode]
+			static void ThrowFileNotFound(string path)
+				=> throw new FileNotFoundException(null, path);
 		}
 
 		/// <summary>
@@ -167,7 +214,7 @@ namespace LELocalePatch {
 		/// </param>
 		/// <param name="utf8Json">Json file stream to write</param>
 		/// <exception cref="DummyFieldAccessException"/>
-		public static void Dump(IReadOnlyList<AssetTypeValueField> tableEnties, Stream utf8Json) {
+		public static void Export(IReadOnlyList<AssetTypeValueField> tableEnties, Stream utf8Json) {
 			var dic = new SortedList<long, string>(tableEnties.Count);
 			foreach (var tableEntryData in tableEnties)
 				dic.Add(tableEntryData["m_Id"].AsLong, tableEntryData["m_Localized"].AsString);
@@ -175,7 +222,7 @@ namespace LELocalePatch {
 			using var json = new Utf8JsonWriter(utf8Json, new() {
 				Indented = true,
 #if NET9_0_OR_GREATER
-							IndentCharacter = '\t',
+				IndentCharacter = '\t',
 #endif
 				Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
 			});
@@ -185,7 +232,7 @@ namespace LELocalePatch {
 			json.WriteEndObject();
 		}
 
-		/// <param name="tableEnties">
+		/// <param name="tableEntries">
 		/// <code>UnityEngine.Localization.Tables.StringTable.m_TableData</code>
 		/// Get by <c>BaseField["m_TableData"]["Array"].Children</c> of an asset in bundle
 		/// </param>
@@ -198,29 +245,35 @@ namespace LELocalePatch {
 		/// <exception cref="JsonException"/>
 		/// <exception cref="DummyFieldAccessException"/>
 		/// <exception cref="KeyNotFoundException"/>
-		public static bool Patch(IReadOnlyList<AssetTypeValueField> tableEnties, Stream utf8JsonFile, bool throwNotMatch = false) {
-			if (tableEnties.Count == 0)
+		public static bool Import(IReadOnlyList<AssetTypeValueField> tableEntries, IDictionary<string, JsonNode?> contents, bool isTranslation, bool throwNotMatch = false) {
+			if (tableEntries.Count == 0)
 				return false;
-			var node = JsonNode.Parse(utf8JsonFile, null, new() { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip })!.AsObject();
-			if (node.Count == 0)
+			if (contents.Count == 0)
 				return false;
 
 			var modified = false;
-			for (var i = 0; i < tableEnties.Count; ++i) {
-				if (node.TryGetPropertyValue(tableEnties[i]["m_Id"].Value.ToString(), out var n)) {
-					tableEnties[i]["m_Localized"].AsString = (string?)n;
+			for (var i = 0; i < tableEntries.Count; ++i) {
+				var localized = tableEntries[i]["m_Localized"].Value;
+				var key = isTranslation ? localized : tableEntries[i]["m_Id"].Value;
+				if (contents.TryGetValue(key.AsString, out var n)) {
+					localized.AsString = (string?)n;
 					modified = true;
 				} else if (throwNotMatch)
-					ThrowKeyNotFound(tableEnties[i]["m_Id"].Value.ToString());
+					ThrowKeyNotFound(key.AsString);
 			}
 			return modified;
+
+			[DoesNotReturn, DebuggerNonUserCode]
+			static void ThrowKeyNotFound(string key)
+				=> throw new KeyNotFoundException($"The key {key} is not found in the json file");
 		}
 
 		public static void RemoveCRC(string catalogJsonPath) {
-			var utf8 = new Utf8JsonReader(File.ReadAllBytes(catalogJsonPath));
-			var json = JsonNode.Parse(ref utf8);
+			JsonNode json;
+			using (var stream = File.OpenRead(catalogJsonPath))
+				json = JsonNode.Parse(stream)!;
 			var providerIndex = 0;
-			foreach (var v in json!["m_ProviderIds"]!.AsArray()) {
+			foreach (var v in json["m_ProviderIds"]!.AsArray()) {
 				if ((string?)v == "UnityEngine.ResourceManagement.ResourceProviders.AssetBundleProvider")
 					break;
 				++providerIndex;
@@ -262,6 +315,13 @@ namespace LELocalePatch {
 			}
 		}
 
+		public enum Mode {
+			None,
+			Export,
+			Import,
+			Translate
+		}
+
 		private readonly struct EntryData {
 #pragma warning disable CS0649
 			public readonly int InternalIdIndex;
@@ -273,25 +333,5 @@ namespace LELocalePatch {
 			public readonly int ResourceTypeIndex;
 #pragma warning restore CS0649
 		}
-
-		/// <exception cref="DirectoryNotFoundException"/>
-		[DoesNotReturn, DebuggerNonUserCode]
-		private static void ThrowDirectoryNotFound(string folderPath)
-			=> throw new DirectoryNotFoundException("The input folder does not exist: " + Path.GetFullPath(folderPath));
-
-		/// <exception cref="FileNotFoundException"/>
-		[DoesNotReturn, DebuggerNonUserCode]
-		private static void ThrowCatalogNotFound(string catalogJsonPath)
-			=> throw new FileNotFoundException("The catalog.json file does not exist: " + Path.GetFullPath(catalogJsonPath));
-
-		/// <exception cref="FileNotFoundException"/>
-		[DoesNotReturn, DebuggerNonUserCode]
-		private static void ThrowJsonFileNotFound(string jsonFileName)
-			=> throw new FileNotFoundException("The json file does not exist: " + jsonFileName);
-
-		/// <exception cref="DirectoryNotFoundException"/>
-		[DoesNotReturn, DebuggerNonUserCode]
-		private static void ThrowKeyNotFound(string key)
-			=> throw new KeyNotFoundException($"The key {key} is not found in the json file");
 	}
 }

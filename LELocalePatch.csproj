@@ -3,19 +3,19 @@
 	<PropertyGroup>
 		<OutputType>Exe</OutputType>
 		<TargetFramework>net8.0</TargetFramework>
+		<RollForward>LatestMajor</RollForward>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
-		<PublishAot>true</PublishAot>
 		<InvariantGlobalization>true</InvariantGlobalization>
-		
+
+		<PublishAot>true</PublishAot>
 		<IlcFoldIdenticalMethodBodies>true</IlcFoldIdenticalMethodBodies>
 		<DebuggerSupport>false</DebuggerSupport>
 		<EventSourceSupport>false</EventSourceSupport>
-		<RollForward>LatestMajor</RollForward>
 		
-		<Version>1.1.0</Version>
+		<Version>2.0.0</Version>
 		<Authors>aianlinb</Authors>
-		<Copyright>Copyright © 2024 aianlinb</Copyright>
+		<Copyright>Copyright © 2024-2025 aianlinb</Copyright>
 		<PackageId>LastEpoch.Localization</PackageId>
 		<RepositoryUrl>https://github.com/aianlinb/LELocalePatch</RepositoryUrl>
 		<PackageProjectUrl>$(RepositoryUrl)</PackageProjectUrl>

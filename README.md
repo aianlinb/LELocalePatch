@@ -30,7 +30,8 @@ Tested on Windows.
 Not tested on other platforms, but should work fine.
 
 ## Example
-[Traditional Chinese](https://github.com/aianlinb/LETraditionalChinese/tree/main/zh-Hant)
+
+[Traditional Chinese](https://github.com/aianlinb/LETraditionalChinese/tree/main/LETraditionalChinese)
 
 ## Libraries
 
