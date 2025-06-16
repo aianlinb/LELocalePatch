@@ -116,7 +116,8 @@ namespace LELocalePatch {
 							stream = File.OpenRead(targetPath);
 						}
 						using (stream) {
-							contents = JsonNode.Parse(stream, null, new() { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip })!.AsObject();
+							contents = JsonNode.Parse(stream, null, new() { AllowTrailingCommas = true,
+								CommentHandling = JsonCommentHandling.Skip })!.AsObject();
 							if (zip is not null) {
 								zip.Dispose();
 								zip = null;
@@ -157,7 +158,8 @@ namespace LELocalePatch {
 									Console.WriteLine("Not found");
 									continue;
 								}
-								contents = JsonNode.Parse(stream, null, new() { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip })!.AsObject();
+								contents = JsonNode.Parse(stream, null, new() { AllowTrailingCommas = true,
+									CommentHandling = JsonCommentHandling.Skip })!.AsObject();
 							}
 							goto case Mode.Translate;
 						case Mode.Translate:
@@ -245,7 +247,8 @@ namespace LELocalePatch {
 		/// <exception cref="JsonException"/>
 		/// <exception cref="DummyFieldAccessException"/>
 		/// <exception cref="KeyNotFoundException"/>
-		public static bool Import(IReadOnlyList<AssetTypeValueField> tableEntries, IDictionary<string, JsonNode?> contents, bool isTranslation, bool throwNotMatch = false) {
+		public static bool Import(IReadOnlyList<AssetTypeValueField> tableEntries,
+			IDictionary<string, JsonNode?> contents, bool isTranslation, bool throwNotMatch = false) {
 			if (tableEntries.Count == 0)
 				return false;
 			if (contents.Count == 0)
@@ -256,7 +259,10 @@ namespace LELocalePatch {
 				var localized = tableEntries[i]["m_Localized"].Value;
 				var key = isTranslation ? localized : tableEntries[i]["m_Id"].Value;
 				if (contents.TryGetValue(key.AsString, out var n)) {
-					localized.AsString = (string?)n;
+					var str = (string?)n;
+					if (!modified && localized.AsString == str)
+						continue; // No modification
+					localized.AsString = str;
 					modified = true;
 				} else if (throwNotMatch)
 					ThrowKeyNotFound(key.AsString);
@@ -281,7 +287,8 @@ namespace LELocalePatch {
 			var entryData = Convert.FromBase64String((string)json["m_EntryDataString"]!);
 			var extraData = Convert.FromBase64String((string)json["m_ExtraDataString"]!);
 			var entryCount = MemoryMarshal.Read<int>(entryData);
-			var entryDatas = MemoryMarshal.CreateReadOnlySpan(ref Unsafe.As<byte, EntryData>(ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(entryData), sizeof(int))), entryCount);
+			var entryDatas = MemoryMarshal.CreateReadOnlySpan(ref Unsafe.As<byte, EntryData>(
+				ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(entryData), sizeof(int))), entryCount);
 
 			var modified = false;
 			for (var i = 0; i < entryCount; ++i) {
@@ -294,8 +301,10 @@ namespace LELocalePatch {
 					++offset;
 					offset += extraData[offset]; // ascii string length
 					var len = MemoryMarshal.Read<int>(new(extraData, ++offset, sizeof(int)));
-					if (JsonNode.Parse(MemoryMarshal.Cast<byte, char>(new ReadOnlySpan<byte>(extraData, offset + sizeof(int), len)).ToString()) is JsonObject jsonObj) {
-						if (!jsonObj.ContainsKey("m_Crc"))
+					if (JsonNode.Parse(MemoryMarshal.Cast<byte, char>(
+						new ReadOnlySpan<byte>(extraData, offset + sizeof(int), len)).ToString()) is JsonObject jsonObj) {
+						if (!jsonObj.TryGetPropertyValue("m_Crc", out var node) || node is not JsonValue v
+							|| v.GetValueKind() != JsonValueKind.Number || (int)v == 0)
 							continue;
 						jsonObj["m_Crc"] = 0;
 						var result = jsonObj.ToJsonString();
