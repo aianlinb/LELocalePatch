@@ -304,7 +304,7 @@ namespace LELocalePatch {
 					if (JsonNode.Parse(MemoryMarshal.Cast<byte, char>(
 						new ReadOnlySpan<byte>(extraData, offset + sizeof(int), len)).ToString()) is JsonObject jsonObj) {
 						if (!jsonObj.TryGetPropertyValue("m_Crc", out var node) || node is not JsonValue v
-							|| v.GetValueKind() != JsonValueKind.Number || (int)v == 0)
+							|| !v.TryGetValue<long>(out var l) || l == 0L)
 							continue;
 						jsonObj["m_Crc"] = 0;
 						var result = jsonObj.ToJsonString();
