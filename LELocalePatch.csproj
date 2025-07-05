@@ -13,7 +13,7 @@
 		<DebuggerSupport>false</DebuggerSupport>
 		<EventSourceSupport>false</EventSourceSupport>
 		
-		<Version>2.0.1</Version>
+		<Version>2.1.0</Version>
 		<Authors>aianlinb</Authors>
 		<Copyright>Copyright © 2024-2025 aianlinb</Copyright>
 		<PackageId>LastEpoch.Localization</PackageId>
@@ -22,7 +22,7 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="AssetsTools.NET" Version="*" />
+		<PackageReference Include="AssetsTools.NET" Version="*-*" />
 	</ItemGroup>
 
 </Project>

@@ -1,11 +1,9 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO.Compression;
-using System.Runtime.CompilerServices;
 #if DEBUG
 using System.Runtime.ExceptionServices;
 #endif
-using System.Runtime.InteropServices;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -35,16 +33,16 @@ namespace LELocalePatch {
 			}
 
 			try {
-				var mode = args[1].ToLowerInvariant() switch {
+				Mode? mode = args[1].ToLowerInvariant() switch {
 					"export" => Mode.Export,
 					"import" => Mode.Import,
 					"translate" => Mode.Translate,
-					_ => Mode.None
+					_ => null
 				};
-				if (mode == Mode.None)
-					PrintUsage();
+				if (mode.HasValue)
+					Run(args[0], args[2], mode.Value);
 				else
-					Run(args[0], args[2], mode);
+					PrintUsage();
 				return; // Do not pause if success
 			} catch (Exception ex) {
 				var tmp = Console.ForegroundColor;
@@ -75,18 +73,24 @@ namespace LELocalePatch {
 		/// <exception cref="JsonException"/>
 		/// <exception cref="KeyNotFoundException"/>
 		public static void Run(string bundlePath, string targetPath, Mode mode) {
-			if (mode is < Mode.Export or > Mode.Translate)
-				ThrowModeNotExist(mode);
+			ArgumentException.ThrowIfNullOrWhiteSpace(bundlePath);
+			ArgumentException.ThrowIfNullOrWhiteSpace(targetPath);
+			ArgumentOutOfRangeException.ThrowIfGreaterThan((uint)mode, (uint)Mode.Translate);
 
+			var manager = new AssetsManager();
 			if (mode != Mode.Export) {
-				var catPath = Path.GetFullPath(Path.GetDirectoryName(Path.GetDirectoryName(bundlePath)) + "/catalog.json");
+				var basePath = Path.GetFullPath(bundlePath + "/../../catalog");
+				var catPath = basePath + ".bin";
 				if (!File.Exists(catPath))
-					ThrowFileNotFound(catPath);
-				RemoveCRC(catPath);
+					catPath = basePath + ".json";
+				if (!File.Exists(catPath))
+					catPath = basePath + ".bundle";
+				if (!File.Exists(catPath))
+					ThrowFileNotFound(basePath + ".bin");
+				Catalog.RemoveCRC(catPath, manager);
 			}
 
 			targetPath = Path.GetFullPath(targetPath);
-			var manager = new AssetsManager();
 			ZipArchive? zip = null;
 			IDictionary<string, JsonNode?>? contents = null;
 			try {
@@ -124,9 +128,6 @@ namespace LELocalePatch {
 							}
 						}
 						break;
-					default:
-						ThrowModeNotExist(mode);
-						return;
 				}
 				bundlePath = Path.GetFullPath(bundlePath);
 
@@ -170,7 +171,7 @@ namespace LELocalePatch {
 							}
 							break;
 						default:
-							ThrowModeNotExist(mode);
+							Console.Error.WriteLine("Unknown mode: " + mode);
 							return;
 					}
 					Console.WriteLine("Done");
@@ -191,12 +192,8 @@ namespace LELocalePatch {
 				Console.WriteLine("Done!");
 			} finally {
 				zip?.Dispose();
-				manager.UnloadAll(true);
+				manager.UnloadAll();
 			}
-
-			[DoesNotReturn, DebuggerNonUserCode]
-			static void ThrowModeNotExist(Mode mode)
-				=> throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unknown mode");
 
 			[DoesNotReturn, DebuggerNonUserCode]
 			static void ThrowDirectoryNotFound(string folderPath)
@@ -274,73 +271,10 @@ namespace LELocalePatch {
 				=> throw new KeyNotFoundException($"The key {key} is not found in the json file");
 		}
 
-		public static void RemoveCRC(string catalogJsonPath) {
-			JsonNode json;
-			using (var stream = File.OpenRead(catalogJsonPath))
-				json = JsonNode.Parse(stream)!;
-			var providerIndex = 0;
-			foreach (var v in json["m_ProviderIds"]!.AsArray()) {
-				if ((string?)v == "UnityEngine.ResourceManagement.ResourceProviders.AssetBundleProvider")
-					break;
-				++providerIndex;
-			}
-			var entryData = Convert.FromBase64String((string)json["m_EntryDataString"]!);
-			var extraData = Convert.FromBase64String((string)json["m_ExtraDataString"]!);
-			var entryCount = MemoryMarshal.Read<int>(entryData);
-			var entryDatas = MemoryMarshal.CreateReadOnlySpan(ref Unsafe.As<byte, EntryData>(
-				ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(entryData), sizeof(int))), entryCount);
-
-			var modified = false;
-			for (var i = 0; i < entryCount; ++i) {
-				if (entryDatas[i].ProviderIndex != providerIndex)
-					continue;
-				var offset = entryDatas[i].DataIndex;
-				if (extraData[offset] == 7) { // JsonObject
-					++offset;
-					offset += extraData[offset]; // ascii string length
-					++offset;
-					offset += extraData[offset]; // ascii string length
-					var len = MemoryMarshal.Read<int>(new(extraData, ++offset, sizeof(int)));
-					if (JsonNode.Parse(MemoryMarshal.Cast<byte, char>(
-						new ReadOnlySpan<byte>(extraData, offset + sizeof(int), len)).ToString()) is JsonObject jsonObj) {
-						if (!jsonObj.TryGetPropertyValue("m_Crc", out var node) || node is not JsonValue v
-							|| !v.TryGetValue<long>(out var l) || l == 0L)
-							continue;
-						jsonObj["m_Crc"] = 0;
-						var result = jsonObj.ToJsonString();
-						Debug.Assert(result.Length * 2 <= len);
-						MemoryMarshal.Write(extraData.AsSpan(offset, sizeof(int)), result.Length * 2);
-						MemoryMarshal.AsBytes(result.AsSpan()).CopyTo(extraData.AsSpan(offset + sizeof(int)));
-						modified = true;
-					} else
-						Debug.Assert(false);
-				}
-			}
-			if (modified) {
-				json["m_ExtraDataString"] = Convert.ToBase64String(extraData);
-				using var fs = new FileStream(catalogJsonPath, FileMode.Create, FileAccess.Write, FileShare.None);
-				using var writer = new Utf8JsonWriter(fs, new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
-				json.WriteTo(writer, new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
-			}
-		}
-
 		public enum Mode {
-			None,
 			Export,
 			Import,
 			Translate
-		}
-
-		private readonly struct EntryData {
-#pragma warning disable CS0649
-			public readonly int InternalIdIndex;
-			public readonly int ProviderIndex;
-			public readonly int DependencyKey;
-			public readonly int DepHash;
-			public readonly int DataIndex;
-			public readonly int PrimaryKeyInde;
-			public readonly int ResourceTypeIndex;
-#pragma warning restore CS0649
 		}
 	}
 }
